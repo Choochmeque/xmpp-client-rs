@@ -3,6 +3,9 @@ name = "xmpp-client-rs"
 version = "0.1.0-dev"
 edition = "2018"
 license = "MPL-2.0"
+description = "Simple xmpp library"
+repository = "https://github.com/Choochmeque/xmpp-client-rs"
+keywords = ["xmpp", "crate"]
 
 [dependencies]
 tokio-xmpp = "4.0.0"
