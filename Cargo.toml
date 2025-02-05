@@ -1,6 +1,6 @@
 [package]
 name = "xmpp-client-rs"
-version = "0.1.0-dev"
+version = "0.1.1-dev"
 edition = "2018"
 license = "MPL-2.0"
 description = "Simple xmpp library"
