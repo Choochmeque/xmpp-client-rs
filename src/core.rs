@@ -18,7 +18,6 @@
  use rand::Rng;
  use secrecy::ExposeSecret;
  use tokio::runtime::Runtime as TokioRuntime;
- use tokio::signal::unix;
  use tokio::sync::{mpsc, RwLock, RwLockMappedWriteGuard, RwLockReadGuard, RwLockWriteGuard};
  use uuid::Uuid;
  
@@ -326,19 +325,19 @@
      pub fn run(mut self) {
          let rt = TokioRuntime::new().unwrap();
  
-         rt.spawn({
-             let tx = self.event_tx.clone();
-             async move {
-                 let mut sigwinch = unix::signal(unix::SignalKind::window_change()).unwrap();
-                 loop {
-                     sigwinch.recv().await;
-                     if let Err(err) = tx.send(Event::WindowChange) {
-                         log::error!("Cannot send signal to internal channel: {}", err);
-                         break;
-                     }
-                 }
-             }
-         });
+        //  rt.spawn({
+        //      let tx = self.event_tx.clone();
+        //      async move {
+        //          let mut sigwinch = unix::signal(unix::SignalKind::window_change()).unwrap();
+        //          loop {
+        //              sigwinch.recv().await;
+        //              if let Err(err) = tx.send(Event::WindowChange) {
+        //                  log::error!("Cannot send signal to internal channel: {}", err);
+        //                  break;
+        //              }
+        //          }
+        //      }
+        //  });
  
          let local_set = tokio::task::LocalSet::new();
          local_set.block_on(&rt, async move {
