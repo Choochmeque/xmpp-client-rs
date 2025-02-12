@@ -390,54 +390,53 @@
          });
      }
  
-     pub async fn run_async(&mut self) {
-        self.schedule(Event::Start);
-        let mut event_rx = self.event_rx.take().unwrap();
-        let mut send_rx = self.send_rx.take().unwrap();
+    pub async fn run_async(&mut self) {
+       self.schedule(Event::Start);
+       let mut event_rx = self.event_rx.take().unwrap();
+       let mut send_rx = self.send_rx.take().unwrap();
 
-        let mut last_events = VecDeque::new();
-        'main: loop {
-            let mut events_buf = Vec::new();
-            tokio::select! {
-                count = event_rx.recv_many(&mut events_buf, 1000) => match count {
-                    0 => {
-                        log::error!("Broken event channel");
-                        break
-                    }
-                    events_count => {
-                        // Ensure all key events are handled first
-                        let (priority_events, filtered_events): (VecDeque<_>, VecDeque<_>) = events_buf.drain(..).partition(|event| matches!(event,
-                                                                                            | Event::ChangeWindow(_)
-                                                                                            | Event::Quit));
-
-                        log::trace!("Event loop got {} new events ({} priority); have {} last events", events_count, priority_events.len(), last_events.len());
-
-                        last_events.extend(filtered_events);
-                        // Handle priority events first
-                        for event in priority_events {
-                            if self.handle_event(event).is_err() {
-                                break 'main
-                            }
-                        }
-                        let mut start = Instant::now();
-                        while let Some(event) = last_events.pop_front() {
-                            if self.handle_event(event).is_err() {
-                                break 'main;
-                            }
-                        }
-                        log::trace!("Event loop, delayed handling of {} events", last_events.len());
-                    },
-                },
-                account_and_stanza = send_rx.recv() => match account_and_stanza {
-                    Some((account, stanza)) => self.send_stanza(account, stanza),
-                    None => {
-                        log::error!("Broken send channel");
-                        break;
-                    }
+       let mut last_events = VecDeque::new();
+       loop {
+          let mut events_buf = Vec::new();
+          tokio::select! {
+             count = event_rx.recv_many(&mut events_buf, 1000) => match count {
+                0 => {
+                    log::error!("Broken event channel");
+                    break
                 }
-            };
-        }
-     }
+                events_count => {
+                    // Ensure all key events are handled first
+                    let (priority_events, filtered_events): (VecDeque<_>, VecDeque<_>) = events_buf.drain(..).partition(|event| matches!(event,
+                                                                          | Event::ChangeWindow(_)
+                                                                          | Event::Quit));
+
+                    log::trace!("Event loop got {} new events ({} priority); have {} last events", events_count, priority_events.len(), last_events.len());
+
+                    last_events.extend(filtered_events);
+                    // Handle priority events first
+                    for event in priority_events {
+                       if self.handle_event(event).is_err() {
+                          break
+                       }
+                    }
+                    while let Some(event) = last_events.pop_front() {
+                       if self.handle_event(event).is_err() {
+                          break;
+                       }
+                    }
+                    log::trace!("Event loop, delayed handling of {} events", last_events.len());
+                },
+             },
+             account_and_stanza = send_rx.recv() => match account_and_stanza {
+                Some((account, stanza)) => self.send_stanza(account, stanza),
+                None => {
+                    log::error!("Broken send channel");
+                    break;
+                }
+             }
+          };
+       }
+    }
 
      pub fn start(&mut self) {
          for (name, account) in self.config.accounts.clone() {
