@@ -10,12 +10,12 @@
  use std::sync::{Arc, Mutex};
  use std::time::Instant;
  
+ use rand::Rng;
+
  use anyhow::Result;
  use chrono::{DateTime, FixedOffset};
  use futures::sink::SinkExt;
  use futures::stream::StreamExt;
- use rand::distr::Distribution;
- use rand::Rng;
  use secrecy::ExposeSecret;
  use tokio::runtime::Runtime as TokioRuntime;
  use tokio::sync::{mpsc, RwLock, RwLockMappedWriteGuard, RwLockReadGuard, RwLockWriteGuard};
@@ -143,12 +143,12 @@
  
  pub trait ModTrait: Display {
      fn init(&mut self, aparte: &mut Aparte) -> Result<(), ()>;
-     fn on_event(&mut self, aparte: &mut Aparte, event: &Event);
+     fn on_event(&self, aparte: &Aparte, event: &Event);
      /// Return weither this message can be handled
      /// 0 means no, 1 mean definitely yes
      fn can_handle_xmpp_message(
-         &mut self,
-         _aparte: &mut Aparte,
+         &self,
+         _aparte: &Aparte,
          _account: &Account,
          _message: &XmppParsersMessage,
          _delay: &Option<Delay>,
@@ -159,7 +159,7 @@
      /// Handle message
      fn handle_xmpp_message(
          &mut self,
-         _aparte: &mut Aparte,
+         _aparte: &Aparte,
          _account: &Account,
          _message: &XmppParsersMessage,
          _delay: &Option<Delay>,
@@ -175,15 +175,15 @@
          }
      }
  
-     fn on_event(&mut self, aparte: &mut Aparte, event: &Event) {
+     fn on_event(&self, aparte: &Aparte, event: &Event) {
          match self {
              Mod::Disco(r#mod) => r#mod.on_event(aparte, event),
          }
      }
  
      fn can_handle_xmpp_message(
-         &mut self,
-         aparte: &mut Aparte,
+         &self,
+         aparte: &Aparte,
          account: &Account,
          message: &XmppParsersMessage,
          delay: &Option<Delay>,
@@ -195,7 +195,7 @@
  
      fn handle_xmpp_message(
          &mut self,
-         aparte: &mut Aparte,
+         aparte: &Aparte,
          account: &Account,
          message: &XmppParsersMessage,
          delay: &Option<Delay>,
@@ -257,12 +257,12 @@
  
  pub struct Aparte {
      mods: Arc<HashMap<TypeId, RwLock<Mod>>>,
-     connections: HashMap<Account, Connection>,
-     current_connection: Option<Account>,
+     connections: Arc<Mutex<HashMap<Account, Connection>>>,
+     current_connection: Arc<Mutex<Option<Account>>>,
      event_tx: mpsc::UnboundedSender<Event>,
-     event_rx: Option<mpsc::UnboundedReceiver<Event>>,
+     event_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<Event>>>>,
      send_tx: mpsc::UnboundedSender<(Account, Element)>,
-     send_rx: Option<mpsc::UnboundedReceiver<(Account, Element)>>,
+     send_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<(Account, Element)>>>>,
      pending_iq: Arc<Mutex<HashMap<Uuid, PendingIqState>>>,
      crypto_engines: Arc<Mutex<HashMap<(Account, BareJid), CryptoEngine>>>,
      /// Aparté main configuration
@@ -278,12 +278,12 @@
  
          let aparte = Self {
              mods: Arc::new(HashMap::new()),
-             connections: HashMap::new(),
-             current_connection: None,
+             connections: Arc::new(Mutex::new(HashMap::new())),
+             current_connection: Arc::new(Mutex::new(None)),
              event_tx,
-             event_rx: Some(event_rx),
+             event_rx: Arc::new(Mutex::new(Some(event_rx))),
              send_tx,
-             send_rx: Some(send_rx),
+             send_rx: Arc::new(Mutex::new(Some(send_rx))),
              config: config.clone(),
              pending_iq: Arc::new(Mutex::new(HashMap::new())),
              crypto_engines: Arc::new(Mutex::new(HashMap::new())),
@@ -306,11 +306,11 @@
          }
      }
  
-     pub fn add_connection(&mut self, account: Account, sink: mpsc::UnboundedSender<Element>) {
+     pub fn add_connection(&self, account: Account, sink: mpsc::UnboundedSender<Element>) {
          let connection = Connection { sink };
  
-         self.connections.insert(account.clone(), connection);
-         self.current_connection = Some(account);
+         self.connections.lock().unwrap().insert(account.clone(), connection);
+         self.current_connection.lock().unwrap().replace(account);
      }
  
      pub fn init(&mut self) -> Result<(), ()> { 
@@ -342,8 +342,8 @@
          let local_set = tokio::task::LocalSet::new();
          local_set.block_on(&rt, async move {
              self.schedule(Event::Start);
-             let mut event_rx = self.event_rx.take().unwrap();
-             let mut send_rx = self.send_rx.take().unwrap();
+             let mut event_rx = self.event_rx.lock().unwrap().take().unwrap();
+             let mut send_rx = self.send_rx.lock().unwrap().take().unwrap();
  
              let mut last_events = VecDeque::new();
              'main: loop {
@@ -390,10 +390,10 @@
          });
      }
  
-    pub async fn run_async(&mut self) {
+    pub async fn run_async(&self) {
        self.schedule(Event::Start);
-       let mut event_rx = self.event_rx.take().unwrap();
-       let mut send_rx = self.send_rx.take().unwrap();
+       let mut event_rx = self.event_rx.lock().unwrap().take().unwrap();
+       let mut send_rx = self.send_rx.lock().unwrap().take().unwrap();
 
        let mut last_events = VecDeque::new();
        loop {
@@ -438,20 +438,20 @@
        }
     }
 
-     pub fn start(&mut self) {
+     pub fn start(&self) {
          for (name, account) in self.config.accounts.clone() {
              if account.autoconnect {
                 //self.schedule(Event::Connect(account, account.password.expect("password not set").clone()));
                 self.connect(&account, account.password.clone().expect("password not set"));
              }
          }
-     }
+     } 
  
-     fn send_stanza(&mut self, account: Account, stanza: Element) {
+     fn send_stanza(&self, account: Account, stanza: Element) {
          let mut raw = Vec::<u8>::new();
          stanza.write_to(&mut raw).unwrap();
          log::debug!("SEND: {}", String::from_utf8(raw).unwrap());
-         match self.connections.get_mut(&account) {
+         match self.connections.lock().unwrap().get_mut(&account) {
              Some(connection) => {
                  if let Err(e) = connection.sink.send(stanza) {
                      log::warn!("Cannot send stanza: {}", e);
@@ -463,7 +463,7 @@
          }
      }
  
-     pub fn connect(&mut self, connection_info: &ConnectionInfo, password: Password) {
+     pub fn connect(&self, connection_info: &ConnectionInfo, password: Password) {
          let account: Account = match Jid::from_str(&connection_info.jid).map(Jid::try_into_full) {
              Ok(Ok(full_jid)) => full_jid,
              Ok(Err(bare_jid)) => {
@@ -577,7 +577,7 @@
          });
      }
  
-     pub fn handle_event(&mut self, event: Event) -> Result<(), ()> {
+     pub fn handle_event(&self, event: Event) -> Result<(), ()> {
          log::trace!("Handle event: {:?}", event);
 
          let before = Instant::now();
@@ -685,7 +685,7 @@
          Ok(())
      }
  
-     fn handle_stanza(&mut self, account: Account, stanza: Element) {
+     fn handle_stanza(&self, account: Account, stanza: Element) {
          match stanza.name() {
              "iq" => match Iq::try_from(stanza.clone()) {
                  Ok(iq) => self.handle_iq(account, iq),
@@ -709,7 +709,7 @@
      }
  
      fn handle_xmpp_message(
-         &mut self,
+         &self,
          account: Account,
          message: XmppParsersMessage,
          delay: Option<Delay>,
@@ -791,7 +791,7 @@
          }
      }
  
-     fn handle_iq(&mut self, account: Account, iq: Iq) {
+     fn handle_iq(&self, account: Account, iq: Iq) {
          // Try to match to pending Iq
          if let Ok(uuid) = Uuid::from_str(&iq.id) {
              let state = self.pending_iq.lock().unwrap().remove(&uuid);
@@ -845,7 +845,7 @@
          }
      }
  
-     fn errored_iq(&mut self, id: &str, err: anyhow::Error) {
+     fn errored_iq(&self, id: &str, err: anyhow::Error) {
          if let Ok(uuid) = Uuid::from_str(id) {
              let state = self.pending_iq.lock().unwrap().remove(&uuid);
              if let Some(state) = state {
@@ -884,7 +884,7 @@
      // TODO maybe use From<>
      pub fn proxy(&self) -> AparteAsync {
          AparteAsync {
-             current_connection: self.current_connection.clone(),
+             current_connection: self.current_connection.lock().unwrap().clone(),
              event_tx: self.event_tx.clone(),
              send_tx: self.send_tx.clone(),
              pending_iq: self.pending_iq.clone(),
@@ -912,7 +912,7 @@
          crypto_engines.insert((account.clone(), recipient.clone()), crypto_engine);
      }
  
-     pub fn send<T>(&mut self, account: &Account, element: T)
+     pub fn send<T>(&self, account: &Account, element: T)
      where
          T: TryInto<Element> + Debug,
      {
@@ -924,12 +924,12 @@
          };
      }
  
-     pub fn schedule(&mut self, event: Event) {
+     pub fn schedule(&self, event: Event) {
          log::trace!("Schedule event {:?}", event);
          self.event_tx.send(event).unwrap();
      }
  
-     pub fn log<T: ToString>(&mut self, message: T) {
+     pub fn log<T: ToString>(&self, message: T) {
          let message = Message::log(message.to_string());
          self.schedule(Event::Message(None, message));
      }
@@ -963,7 +963,7 @@
      }
  
      pub fn current_account(&self) -> Option<Account> {
-         self.current_connection.clone()
+         self.current_connection.lock().unwrap().clone()
      }
  }
  

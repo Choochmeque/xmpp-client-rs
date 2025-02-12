@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 use std::fmt;
 use std::str::FromStr;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Result};
 use uuid::Uuid;
@@ -22,7 +23,7 @@ use crate::i18n;
 pub struct DiscoMod {
     identity: disco::Identity,
     client_features: HashSet<Feature>,
-    server_features: HashMap<Account, Vec<String>>,
+    server_features: Arc<Mutex<HashMap<Account, Vec<String>>>>,
 }
 
 impl DiscoMod {
@@ -35,7 +36,7 @@ impl DiscoMod {
         Self {
             identity: disco::Identity::new(category, type_, lang, name),
             client_features: HashSet::new(),
-            server_features: HashMap::new(),
+            server_features: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -47,6 +48,8 @@ impl DiscoMod {
 
     pub fn has_feature(&self, account: &Account, feature: &str) -> bool {
         self.server_features
+            .lock()
+            .unwrap()
             .get(account)
             .unwrap()
             .iter()
@@ -110,10 +113,10 @@ impl ModTrait for DiscoMod {
         Ok(())
     }
 
-    fn on_event(&mut self, aparte: &mut Aparte, event: &Event) {
+    fn on_event(&self, aparte: &Aparte, event: &Event) {
         match event {
             Event::Connected(account, jid) => {
-                self.server_features.insert(account.clone(), Vec::new());
+                self.server_features.lock().unwrap().insert(account.clone(), Vec::new());
 
                 Aparte::spawn({
                     let mut aparte = aparte.proxy();
@@ -128,7 +131,7 @@ impl ModTrait for DiscoMod {
                 });
             }
             Event::Disco(account, features) => {
-                if let Some(server_features) = self.server_features.get_mut(account) {
+                if let Some(server_features) = self.server_features.lock().unwrap().get_mut(account) {
                     server_features.extend(features.clone());
                 }
             }
