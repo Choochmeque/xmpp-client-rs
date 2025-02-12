@@ -22,7 +22,7 @@ use crate::i18n;
 
 pub struct DiscoMod {
     identity: disco::Identity,
-    client_features: HashSet<Feature>,
+    client_features: Arc<Mutex<HashSet<Feature>>>,
     server_features: Arc<Mutex<HashMap<Account, Vec<String>>>>,
 }
 
@@ -35,15 +35,15 @@ impl DiscoMod {
     ) -> Self {
         Self {
             identity: disco::Identity::new(category, type_, lang, name),
-            client_features: HashSet::new(),
+            client_features: Arc::new(Mutex::new(HashSet::new())),
             server_features: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
-    pub fn add_feature<S: Into<String>>(&mut self, feature: S) {
+    pub fn add_feature<S: Into<String>>(&self, feature: S) {
         let feature = Feature::new(feature.into());
         log::debug!("Adding `{}` feature", feature.var);
-        self.client_features.insert(feature);
+        self.client_features.lock().unwrap().insert(feature);
     }
 
     pub fn has_feature(&self, account: &Account, feature: &str) -> bool {
@@ -100,14 +100,14 @@ impl DiscoMod {
         disco::DiscoInfoResult {
             node: None,
             identities,
-            features: self.client_features.iter().cloned().collect(),
+            features: self.client_features.lock().unwrap().iter().cloned().collect(),
             extensions: vec![],
         }
     }
 }
 
 impl ModTrait for DiscoMod {
-    fn init(&mut self, _aparte: &mut Aparte) -> Result<(), ()> {
+    fn init(&self, _aparte: &Aparte) -> Result<(), ()> {
         self.add_feature(ns::DISCO_INFO);
         // TODO? self.add_feature(ns::DISCO_ITEMS);
         Ok(())

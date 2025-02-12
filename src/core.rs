@@ -142,7 +142,7 @@
  from_mod!(Disco, mods::disco::DiscoMod);
  
  pub trait ModTrait: Display {
-     fn init(&mut self, aparte: &mut Aparte) -> Result<(), ()>;
+     fn init(&self, aparte: &Aparte) -> Result<(), ()>;
      fn on_event(&self, aparte: &Aparte, event: &Event);
      /// Return weither this message can be handled
      /// 0 means no, 1 mean definitely yes
@@ -169,7 +169,7 @@
  }
  
  impl ModTrait for Mod {
-     fn init(&mut self, aparte: &mut Aparte) -> Result<(), ()> {
+     fn init(&self, aparte: &Aparte) -> Result<(), ()> {
          match self {
              Mod::Disco(r#mod) => r#mod.init(aparte),
          }
@@ -256,7 +256,7 @@
  );
  
  pub struct Aparte {
-     mods: Arc<HashMap<TypeId, RwLock<Mod>>>,
+     mods: Arc<Mutex<HashMap<TypeId, RwLock<Mod>>>>,
      connections: Arc<Mutex<HashMap<Account, Connection>>>,
      current_connection: Arc<Mutex<Option<Account>>>,
      event_tx: mpsc::UnboundedSender<Event>,
@@ -277,7 +277,7 @@
          let (send_tx, send_rx) = mpsc::unbounded_channel();
  
          let aparte = Self {
-             mods: Arc::new(HashMap::new()),
+             mods: Arc::new(Mutex::new(HashMap::new())),
              connections: Arc::new(Mutex::new(HashMap::new())),
              current_connection: Arc::new(Mutex::new(None)),
              event_tx,
@@ -292,9 +292,9 @@
          Ok(aparte)
      }
  
-     pub fn add_mod(&mut self, r#mod: Mod) {
+     pub fn add_mod(&self, r#mod: Mod) {
          log::info!("Add mod `{}`", r#mod);
-         let mods = Arc::get_mut(&mut self.mods).unwrap();
+         let mut mods = self.mods.lock().unwrap();
          // TODO ensure mod is not inserted twice
          match r#mod {
              Mod::Disco(r#mod) => {
@@ -313,8 +313,8 @@
          self.current_connection.lock().unwrap().replace(account);
      }
  
-     pub fn init(&mut self) -> Result<(), ()> { 
-         let mods = self.mods.clone();
+     pub fn init(&self) -> Result<(), ()> { 
+         let mods = self.mods.lock().unwrap();
          for (_, r#mod) in mods.iter() {
              r#mod.try_write().unwrap().init(self)?;
          }
@@ -583,7 +583,7 @@
          let before = Instant::now();
  
          {
-             let mods = self.mods.clone();
+             let mods = self.mods.lock().unwrap();
              for (_, r#mod) in mods.iter() {
                  let before = Instant::now();
                  r#mod.try_write().unwrap().on_event(self, &event);
@@ -622,14 +622,14 @@
                  let mut presence = Presence::new(PresenceType::None);
                  presence.show = Some(PresenceShow::Chat);
  
-                 let disco = self.get_mod::<mods::disco::DiscoMod>().get_disco();
-                 let disco = caps::compute_disco(&disco);
-                 let verification_string =
-                     caps::hash_caps(&disco, xmpp_hashes::Algo::Blake2b_512).unwrap();
-                 let caps = Caps::new("aparté", verification_string);
-                 presence.add_payload(caps);
+                //  let disco = self.get_mod::<mods::disco::DiscoMod>().get_disco();
+                //  let disco = caps::compute_disco(&disco);
+                //  let verification_string =
+                //      caps::hash_caps(&disco, xmpp_hashes::Algo::Blake2b_512).unwrap();
+                //  let caps = Caps::new("aparté", verification_string);
+                //  presence.add_payload(caps);
  
-                 self.send(&account, presence);
+                //  self.send(&account, presence);
              }
              Event::Disconnected(account, err) => {
                  self.log(format!("Connection lost for {}: {}", account, err));
@@ -768,7 +768,7 @@
              }
          }
  
-         let mods = self.mods.clone();
+         let mods = self.mods.lock().unwrap();
          for (_, r#mod) in mods.iter() {
              let message_match = r#mod
                  .try_write()
@@ -939,28 +939,27 @@
          self.schedule(Event::Message(None, message));
      }
  
-     pub fn get_mod<'a, T>(&'a self) -> RwLockReadGuard<'a, T>
-     where
-         T: 'static,
-         for<'b> &'b T: From<&'b Mod>,
-     {
-         match self.mods.get(&TypeId::of::<T>()) {
-             Some(r#mod) => RwLockReadGuard::map(r#mod.try_read().unwrap(), |m| m.into()),
-             None => unreachable!(),
-         }
-     }
+    //  pub fn get_mod<'a, T>(&'a self) -> RwLockReadGuard<'a, T>
+    //  where
+    //      T: 'static,
+    //      for<'b> &'b T: From<&'b Mod>,
+    //  {
+    //      let mods = self.mods.lock().unwrap();
+    //      let r#mod = mods.get(&TypeId::of::<T>()).unwrap().clone();
+    //      RwLockReadGuard::map(r#mod.read().unwrap(), |m| m.into())
+    //  }
  
-     #[allow(unused)]
-     pub fn get_mod_mut<'a, T>(&'a self) -> RwLockMappedWriteGuard<'a, T>
-     where
-         T: 'static,
-         for<'b> &'b mut T: From<&'b mut Mod>,
-     {
-         match self.mods.get(&TypeId::of::<T>()) {
-             Some(r#mod) => RwLockWriteGuard::map(r#mod.try_write().unwrap(), |m| m.into()),
-             None => unreachable!(),
-         }
-     }
+    //  #[allow(unused)]
+    //  pub fn get_mod_mut<'a, T>(&'a self) -> RwLockMappedWriteGuard<'a, T>
+    //  where
+    //      T: 'static,
+    //      for<'b> &'b mut T: From<&'b mut Mod>,
+    //  {
+    //      match self.mods.lock().unwrap().get(&TypeId::of::<T>()) {
+    //          Some(r#mod) => RwLockWriteGuard::map(r#mod.try_write().unwrap(), |m| m.into()),
+    //          None => unreachable!(),
+    //      }
+    //  }
  
      pub fn current_account(&self) -> Option<Account> {
          self.current_connection.lock().unwrap().clone()
